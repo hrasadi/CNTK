@@ -60,15 +60,15 @@ private:
         return m_numberOfSamplesSeenSoFar >= m_config.m_totalEpochSizeInSamples / m_config.m_numberOfWorkers + shouldAddOneSample;
     }
 
+protected:
     // Checks if a sequence descriptor is a special marker for the end of the sweep.
     inline bool IsEndOfSweep(const SequenceDescription& sequence)
     {
         return sequence.m_indexInChunk == s_endOfSweep.m_indexInChunk &&
-               sequence.m_chunkId == s_endOfSweep.m_chunkId &&
-               sequence.m_numberOfSamples == s_endOfSweep.m_numberOfSamples;
+            sequence.m_chunkId == s_endOfSweep.m_chunkId &&
+            sequence.m_numberOfSamples == s_endOfSweep.m_numberOfSamples;
     }
 
-protected:
     // Struct that describes a window of sequences 
     // that are currently processed
     struct SequenceWindow

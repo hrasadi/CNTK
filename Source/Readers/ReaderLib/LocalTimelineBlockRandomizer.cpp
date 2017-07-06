@@ -90,8 +90,31 @@ void LocalTimelineBlockRandomizer::PrefetchChunks()
             position = (position + 1) % m_originalChunkDescriptions.size();
         }
 
-        m_rng.seed((unsigned long)(capturedPosition + sweepIndex + m_seedOffset));
-        Microsoft::MSR::CNTK::RandomShuffleMT(m_prefetchedSequences, m_rng);
+        // Find all end of sweep markers and randomize among them.
+        if (sweepIndex == capturedSweepIndex)
+        {
+            m_rng.seed((unsigned long)(capturedPosition + sweepIndex + m_seedOffset));
+            Microsoft::MSR::CNTK::RandomShuffleMT(m_prefetchedSequences, m_rng);
+        }
+        else
+        {
+            std::vector<std::pair<size_t, size_t>> sweepIndices;
+            size_t curPos = 0;
+            for (size_t i = 0; i < m_prefetchedSequences.size(); ++i)
+                if (IsEndOfSweep(m_prefetchedSequences[i]))
+                {
+                    sweepIndices.push_back(std::make_pair(curPos, i));
+                    curPos = i + 1;
+                }
+
+            sweepIndices.push_back(std::make_pair(curPos, m_prefetchedSequences.size()));
+
+            for (size_t i = 0; i < sweepIndices.size(); ++i)
+            {
+                m_rng.seed((unsigned long)(capturedPosition + sweepIndex + i + m_seedOffset));
+                Microsoft::MSR::CNTK::RandomShuffleMT(m_prefetchedSequences, sweepIndices[i].first, sweepIndices[i].second, m_rng);
+            }
+        }
     });
 }
 

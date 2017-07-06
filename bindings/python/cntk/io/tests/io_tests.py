@@ -14,7 +14,7 @@ from cntk.io import MinibatchSource, CTFDeserializer, StreamDefs, StreamDef, \
     FULL_DATA_SWEEP, INFINITELY_REPEAT, \
     DEFAULT_RANDOMIZATION_WINDOW_IN_CHUNKS, \
     sequence_to_cntk_text_format, UserMinibatchSource, StreamInformation, \
-    MinibatchData, FromData, UserDeserializer
+    MinibatchData, UserDeserializer
 from cntk.logging import TraceLevel
 import cntk.io.transforms as xforms
 from cntk.cntk_py import to_dictionary, MinibatchSourceConfig
@@ -1080,70 +1080,6 @@ def test_prefetch_with_unpacking(tmpdir):
         else:
             empty = True
 
-def test_inmemory_deserializer_dense_sample():
-    import pdb; pdb.set_trace()
-    N = 5
-    X = np.arange(3*N).reshape(N,3).astype(np.float32) # 5 rows of 3 values
-    mbs = MinibatchSource([FromData(dict(x=X))], max_sweeps=1, randomize=True)
-
-    mb = mbs.next_minibatch(3) # get a minibatch of 3
-    data = mb[mbs.streams['x']].data.asarray()
-    assert (data == np.array([[[ 0.,  1.,  2.]],
-                              [[ 3.,  4.,  5.]],
-                              [[ 6.,  7.,  8.]]],
-                             dtype=np.float32)).all()
-
-    mb = mbs.next_minibatch(3) # the sweep is crossed, 2 samples left
-    data = mb[mbs.streams['x']].data.asarray()
-    assert (data == np.array([[[  9.,  10.,  11.]],
-                              [[ 12.,  13.,  14.]]],
-                             dtype=np.float32)).all()
-
-    mb = mbs.next_minibatch(3) # no more data
-    assert mb == {}
-
-def test_inmemory_deserializer_sparse_sample():
-    import scipy.sparse
-    N = 5
-    X = np.arange(3*N).reshape(N,3).astype(np.float32)
-    Y = scipy.sparse.csr_matrix(np.array([[1, 0, 0], 
-                                          [0, 2, 0], 
-                                          [0, 0, 3], 
-                                          [4, 0, 0], 
-                                          [0, 5, 0]], dtype=np.float32))
-
-    mbs = MinibatchSource([FromData(dict(x=X, y=Y))], randomize=False)
-    mb = mbs.next_minibatch(3)
-    result = mb[mbs.streams['y']].data.asarray()
-    assert (result == np.array([[[ 1, 0, 0]],
-                                [[ 0, 2, 0]],
-                                [[ 0, 0, 3]]], dtype=np.float32)).all()
-
-    mb = mbs.next_minibatch(3)
-    result = mb[mbs.streams['y']].data.asarray()
-    assert (result == np.array([[[ 4, 0, 0]],
-                                [[ 0, 5, 0]],
-                                [[ 1, 0, 0]]], dtype=np.float32)).all()
-
-    mb = mbs.next_minibatch(2)
-    result = mb[mbs.streams['y']].data.asarray()
-    assert (result == np.array([[[ 0, 2, 0]],
-                                [[ 0, 0, 3]]], dtype=np.float32)).all()
-
-def test_inmemory_deserializer_sequences():
-    import scipy.sparse as sp
-
-    XX = [np.array([1,3,2], np.float32), np.array([4,1], np.float32)]  # 2 sequences
-    YY = [sp.csr_matrix(np.array([[0,1],[1,0],[1,0]], np.float32)), sp.csr_matrix(np.array([[1,0],[1,0]], np.float32))]
-
-    mbs = MinibatchSource([FromData(dict(xx=(XX), yy=(YY)))], randomize=False)
-    mb = mbs.next_minibatch(3)
-    result = mb[mbs.streams['xx']].data.asarray()
-    assert (result == np.array([[ 1, 3, 2 ]], dtype=np.float32)).all()
-
-    result = mb[mbs.streams['yy']].data.asarray()
-    assert (result == np.array([[[ 0, 1 ], [ 1, 0], [1, 0]]], dtype=np.float32)).all()
-
 # Helper generator
 class GenDeserializer(UserDeserializer):
     def __init__(self, stream_infos, num_chunks, num_sequences, max_sequence_len = 1):
@@ -1218,7 +1154,7 @@ def test_user_deserializer_sample_mode():
 
     # Big chunks
     d = GenDeserializer(stream_infos=streams, num_chunks=20, num_sequences=100)
-    mbs = MinibatchSource([d], randomize=False, max_sweeps=2, randomization_window_in_chunks=5)
+    mbs = MinibatchSource([d], randomize=False, max_sweeps=2)
     run_minibatch_source(mbs, num_chunks=20, num_samples_per_value=200)
     # Randomized
     mbs = MinibatchSource([d], randomize=True, max_sweeps=2, randomization_window_in_chunks=5)
@@ -1226,7 +1162,7 @@ def test_user_deserializer_sample_mode():
 
     # Small chunks of 1
     d = GenDeserializer(stream_infos=streams, num_chunks=20, num_sequences=1)
-    mbs = MinibatchSource([d], randomize=False, max_sweeps=3, randomization_window_in_chunks=5)
+    mbs = MinibatchSource([d], randomize=False, max_sweeps=3)
     run_minibatch_source(mbs, num_chunks=20, num_samples_per_value=3)
     # Randomized
     mbs = MinibatchSource([d], randomize=True, max_sweeps=3, randomization_window_in_chunks=5)

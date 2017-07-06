@@ -1101,18 +1101,13 @@ class UserDeserializer(cntk_py.SwigDataDeserializer):
     '''
     User deserializer is a base class for all user defined deserializers.
     To support deserialization of a new format, please implement the public
-    methods of this class and pass an instace of it to the MinibatchSource.
-    The advantage of using this class in comparison to the UserMinibatchSource is
+    methods of this class and pass an instance of it to MinibatchSource.
+    The advantage of using this class in comparison to UserMinibatchSource is
     that you will get all machinery of CPU/GPU/IO prefetch/packing/randomization/distribution
     out of the box.
 
-    The MinibatchSource uses the meta information provided by this class:
-        - stream_infos
-        - chunk_infos
-        - sequence_infos_for_chunksuch 
-    to build the global timeline. Then it moves along the global timeline reading data with get_chunk 
-    method to form new a minibatch. In distributed mode only those chunks are read that are handled by
-    the corresponding worker.
+    The MinibatchSource uses the information provided by this classto build the timeline and move
+    along it when next minibatch is requested. 
     '''
     def __init__(self):
         super(UserDeserializer, self).__init__()
@@ -1126,26 +1121,26 @@ class UserDeserializer(cntk_py.SwigDataDeserializer):
         Returns:
             list of :class:`StreamInformation` exposed by the deserializer
         '''
-        raise NotImplementedError
+        raise NotImplementedError('should return a list of StreamInformation for all streams')
 
     def num_chunks(self):
         '''
         Should return the total number of chunks.
         '''
-        raise NotImplementedError('please implement num_chunks: it should return the total number of chunks.')
+        raise NotImplementedError('should return the total number of chunks.')
 
     def get_chunk(self, chunk_id):
         '''
-        Should return an instance of the :class:`UserChunk` that actually represents
-        the data for the chunk.
+        Should return a dictionary of stream name -> data of the chunk, where data is csr_matrix/numpy array in sample mode,
+        or a list of csr_matrix/numpy array in sequence mode.
 
         Args:
-            chunk_id(int): id of the chunk to be read
+            chunk_id(int): id of the chunk to be read, 0 <= chunk_id < num_chunks
 
         Returns:
-            an instance of :class:`UserChunk` containing the data
+            dict containing the data
         '''
-        raise NotImplementedError
+        raise NotImplementedError('should return data for the chunk.')
 
     def _stream_infos(self, infos=None):
         self._last_chunk = None
@@ -1178,185 +1173,3 @@ class UserDeserializer(cntk_py.SwigDataDeserializer):
         if self._last_chunk_id != chunk_id:
             raise ValueError('Logical error in randomizer: unexpected chunk id')
         sequences.extend(self._last_chunk.sequence_infos())
-
-class SequenceInformation(cntk_py.SequenceDescription):
-    '''
-    Sequence meta information is used to describe a single sequence
-    exposed from a data chunk :class:`ChunkInformation`.
-
-    Args:
-        index_in_chunk (int): index in the chunk
-        number_of_samples (int): number of samples in the sequence
-        chunk_id (int): id of the chunk this sequence belongs to
-        id: unique id of the sequence used to correlate sequences coming from different deserializers
-    '''
-    def __init__(self, index_in_chunk, number_of_samples, chunk_id, id):
-        super(SequenceInformation, self).__init__()
-        self.m_index_in_chunk = index_in_chunk 
-        self.m_number_of_samples = number_of_samples
-        self.m_chunk_id = chunk_id
-        self.m_key.m_sequence = id
-        self.m_key.m_sample = 0
-
-class UserChunk(cntk_py.SwigChunk):
-    '''
-    User chunk represents a data in a single chunk. Its meta data should be exposed
-    from the deserializer using :class:`ChunkInformation`.
-    In case of parallel training each and every worker has access to information about all chunks (:class:`ChunkInformation`),
-    but a particular worker reads only a subset of actual data chunks (:class:`UserChunk`) it is responsible for. 
-
-    Args:
-        stream_infos (array of :class:`StreamInformation`): information about streams of the corresponding deserializer
-    '''
-    def __init__(self, stream_infos):
-        super(UserChunk, self).__init__(stream_infos)
-        # Chunks should be managed from the C++ deserializer.
-        self.__disown__()
-
-    def get_sequence(sequence_index_in_chunk):
-        '''
-        Returns an array of sequence data with the specified index for all the streams.
-        The order of the returned array should be the same as the order of streams returned by :func:`UserDeserializer.stream_infos`.
-
-        Args:
-            sequence_index_in_chunk(int): index of the sequence previously returned by sequence_infos_for_chunk method.
-
-        Returns:
-            An csr matrix or numpy array representing a sequence with the given sequence id
-        '''
-        raise NotImplementedError
-
-    def sequence_infos(self):
-        '''
-        Should return a list of sequence meta information :class:`SequenceInformation`
-        that fully describes the chunk with the given chunk_id. This information
-        is used by the randomizer to build the global timeline and have a common view
-        on a particular minibatch in distributed case.
-
-        Args:
-            chunk_id(int): id of the chunk returned earlier by chunk_infos method
-
-        Returns:
-            list of :class:`SequenceInformation` describing the specified chunk
-        '''
-        raise NotImplementedError 
-
-    def _get_sequence(self, sequence_id, sequences):
-        sequences.extend(self.get_sequence(sequence_id))
-
-class FromData(UserDeserializer):
-    '''
-    This wraps in-memory data as a CNTK deserializer.
-    Use this if your data is small enough to be loaded into RAM in its entirety.
-    The data is not copied, so if you want to modify the data while being read through this deserializer,
-    please pass a copy.
-
-    Example:
-     >>> # dense input
-     >>> N = 5
-     >>> X = np.arange(3*N).reshape(N,3).astype(np.float32) # 5 rows of 3 values
-     >>> s = C.io.MinibatchSource([FromData(dict(x=X))], max_sweeps=1, randomize=False)
-     >>> mb = s.next_minibatch(3) # get a minibatch of 3
-     >>> d = mb[s.streams['x']]
-     >>> d.data.asarray()
-     array([[[ 0.,  1.,  2.]],
-            [[ 3.,  4.,  5.]],
-            [[ 6.,  7.,  8.]]], dtype=float32)
-     >>> mb = s.next_minibatch(3) # only 2 left
-     >>> d = mb[s.streams['x']]
-     >>> d.data.asarray()
-     array([[[  9.,  10.,  11.]],
-            [[ 12.,  13.,  14.]]], dtype=float32)
-     >>> mb = s.next_minibatch(3) # no more data
-     >>> mb
-     {}
-
-     >>> # sparse input
-     >>> import scipy.sparse
-     >>> N = 5
-     >>> X = np.arange(3*N).reshape(N,3).astype(np.float32)
-     >>> Y = scipy.sparse.csr_matrix(np.array([[1, 0, 0], 
-     >>>                                       [0, 2, 0], 
-     >>>                                       [0, 0, 3], 
-     >>>                                       [4, 0, 0], 
-     >>>                                       [0, 5, 0]], dtype=np.float32))
-     >>> s = MinibatchSource([FromData(dict(x=X, y=Y))], randomize=False)
-     >>> mb = s.next_minibatch(3)
-     >>> mb[s.streams['y']].data.asarray()
-     np.array([[[ 1, 0, 0]],
-               [[ 0, 2, 0]],
-               [[ 0, 0, 3]]], dtype=np.float32)
-     >>> mb = s.next_minibatch(3) # crossing the sweep
-     >>> result = mb[s.streams['y']].data.asarray()
-     np.array([[[ 4, 0, 0]],
-               [[ 0, 5, 0]],
-               [[ 1, 0, 0]]], dtype=np.float32)
-
-
-     >>> # data can also be sequences of arbitrary length
-     >>> XX = [np.array([1,3,2], np.float32), np.array([4,1], np.float32)]  # 2 sequences
-     >>> YY = [sp.csr_matrix(np.array([[0,1],[1,0],[1,0]], np.float32)),
-     >>>       sp.csr_matrix(np.array([[1,0],[1,0]], np.float32))]
-     >>> s = MinibatchSource([FromData(dict(xx=(XX, Ct.Sequence[Ct.tensor]), yy=(YY, Ct.Sequence[Ct.tensor])))],
-     >>>                     randomize=False)
-     >>> mb = s.next_minibatch(3)
-     >>> mb[s.streams['xx']].data.asarray()
-     np.array([[ 1, 3, 2 ]], dtype=np.float32)
-     >>> mb[s.streams['yy']].data.asarray()
-     np.array([[[ 0, 1 ], [ 1, 0], [1, 0]]], dtype=np.float32)
-
-    Args:
-        data_streams: name-value pairs
-
-    Returns:
-        An implementation of a :class:`UserDeserializer` that can passed to the minibatch source.
-    '''
-    def __init__(self, data_streams):
-        super(FromData, self).__init__()
-        if not data_streams:
-            raise(ValueError('at least one stream must be specified, in the form name=data or name=(data, type)'))
-
-        self._data = data_streams   # [name] -> numpy.array or scipy.sparse.csr_matrix or list of those
-        self._streams = []          # meta information about exposed stream
-        num_sequences = -1          # total number of sequences (can be of length 1 in sample mode)
-                                    # must be the same for all streams
-
-        # get the data and types from the input
-        # for each stream we need to find out the shape and sparsity from the data
-        from scipy import sparse
-        for name, value in data_streams.items():
-            is_sequence = isinstance(value, list) # assume that this is a list of sequences
-
-            # Check sparsity
-            element = value[0] if is_sequence else value
-            if isinstance(element, np.ndarray):
-                is_sparse = False
-            elif isinstance(element, sparse.csr_matrix):
-                is_sparse = True
-            else:
-                raise TypeError('data must be a numpy.array or scipy.sparse.csr_matrix, or a list of those')
-
-            sample_shape = value[0].shape[1:] if is_sequence else value.shape[1:]
-
-            # Check length of the chunk across streams
-            stream_num_sequences = len(value) if is_sequence else value.shape[0]            
-            if num_sequences == -1:
-                if stream_num_sequences == 0:
-                    raise(ValueError('data is empty'))
-                num_sequences = stream_num_sequences
-            elif stream_num_sequences != num_sequences:
-                raise TypeError('all data items must have the same first dimension')
-            self._streams.append(dict(name = name, shape = sample_shape, is_sparse = is_sparse))
-
-    def stream_infos(self):
-        return [StreamInformation(s['name'], i, ['dense', 'sparse'][s['is_sparse']], 
-                                  np.float32, s['shape'])
-                for i, s in enumerate(self._streams)]
-
-    def num_chunks(self):
-        return 1
-
-    def get_chunk(self, chunk_id):
-        if chunk_id != 0:
-            raise ValueError("Unexpected chunk id")
-        return self._data;
