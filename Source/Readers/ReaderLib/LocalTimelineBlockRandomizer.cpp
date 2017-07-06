@@ -43,51 +43,55 @@ void LocalTimelineBlockRandomizer::PrefetchChunks()
         // only prefetches data.
         int64_t range = m_randomizationRange;
         m_prefetchedChunks.clear();
+        m_prefetchedSequences.clear();
         while (range > 0)
         {
             if (position == 0)
             {
                 sweepIndex++;
                 m_prefetchedChunkDescriptions = m_originalChunkDescriptions;
-                m_rng.seed((unsigned long)sweepIndex);
+                m_rng.seed((unsigned long)sweepIndex + m_seedOffset);
                 Microsoft::MSR::CNTK::RandomShuffleMT(m_prefetchedChunkDescriptions, m_rng);
             }
 
             auto desc = m_prefetchedChunkDescriptions[position];
             if (position % m_config.m_numberOfWorkers == m_config.m_workerRank) // Need to add to the window
             {
-                std::vector<SequenceDescription> sequences;
                 ChunkPtr data;
+                size_t oldSize = m_prefetchedSequences.size();
                 if (m_window.m_dataChunks.find(desc.m_id) == m_window.m_dataChunks.end())
                 {
                     // Query deserializer.
                     data = m_deserializer->GetChunk(desc.m_id);
-                    m_deserializer->GetSequencesForChunk(desc.m_id, sequences);
+                    m_deserializer->GetSequencesForChunk(desc.m_id, m_prefetchedSequences);
                 }
                 else // Simple copy
                 {
                     for (size_t i = 0; i < m_window.m_sequences.size(); ++i)
                         if (m_window.m_sequences[i].m_chunkId == desc.m_id)
-                            sequences.push_back(m_window.m_sequences[i]);
+                            m_prefetchedSequences.push_back(m_window.m_sequences[i]);
                     data = m_window.m_dataChunks[desc.m_id];
                 }
 
-                m_prefetchedChunks.push_back(std::make_tuple(desc, data, sequences));
+                m_prefetchedChunks.push_back(std::make_tuple(desc, data));
 
                 if (m_sampleBasedRandomizationWindow)
                     --range;
                 else
-                    for (const auto& n : sequences)
-                        range -= n.m_numberOfSamples;
+                    for (size_t i = oldSize; i < m_prefetchedSequences.size(); ++i)
+                        range -= m_prefetchedSequences[i].m_numberOfSamples;
             }
             else
             {
-                // Empty, we do not need this except for tracking the current 
-                m_prefetchedChunks.push_back(std::make_tuple(ChunkDescription{}, nullptr, std::vector<SequenceDescription>{}));
+                // Empty, we do not need data , only for tracking the current chunk.
+                m_prefetchedChunks.push_back(std::make_tuple(ChunkDescription{}, nullptr));
             }
 
             position = (position + 1) % m_originalChunkDescriptions.size();
         }
+
+        m_rng.seed((unsigned long)(capturedPosition + sweepIndex + m_seedOffset));
+        Microsoft::MSR::CNTK::RandomShuffleMT(m_prefetchedSequences, m_rng);
     });
 }
 
@@ -103,7 +107,7 @@ void LocalTimelineBlockRandomizer::RefillSequenceWindow()
 
     for (const auto& c : m_prefetchedChunks)
     {
-        m_window.m_sequences.insert(m_window.m_sequences.end(), std::get<2>(c).begin(), std::get<2>(c).end());
+        m_window.m_sequences.insert(m_window.m_sequences.end(), m_prefetchedSequences.begin(), m_prefetchedSequences.end());
         m_window.m_dataChunks.insert(std::make_pair(std::get<0>(c).m_id, std::get<1>(c)));
 
         // Last chunk
