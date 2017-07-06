@@ -1130,13 +1130,12 @@ def test_inmemory_deserializer_sparse_sample():
                                 [[ 0, 0, 3]]], dtype=np.float32)).all()
 
 def test_inmemory_deserializer_sequences():
-    import cntk.layers.typing as Ct
     import scipy.sparse as sp
 
     XX = [np.array([1,3,2], np.float32), np.array([4,1], np.float32)]  # 2 sequences
     YY = [sp.csr_matrix(np.array([[0,1],[1,0],[1,0]], np.float32)), sp.csr_matrix(np.array([[1,0],[1,0]], np.float32))]
 
-    mbs = MinibatchSource([FromData(dict(xx=(XX, Ct.Sequence[Ct.tensor]), yy=(YY, Ct.Sequence[Ct.tensor])))], randomize=False)
+    mbs = MinibatchSource([FromData(dict(xx=(XX), yy=(YY)))], randomize=False)
     mb = mbs.next_minibatch(3)
     result = mb[mbs.streams['xx']].data.asarray()
     assert (result == np.array([[ 1, 3, 2 ]], dtype=np.float32)).all()

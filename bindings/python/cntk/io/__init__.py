@@ -1313,62 +1313,45 @@ class FromData(UserDeserializer):
     '''
     def __init__(self, data_streams):
         super(FromData, self).__init__()
-
-        from cntk import Variable
         if not data_streams:
             raise(ValueError('at least one stream must be specified, in the form name=data or name=(data, type)'))
 
-        self._data = dict()         # [name] -> numpy.array or scipy.sparse.csr_matrix
-        self._types = dict()        # [name] -> Variable._Type
+        self._data = data_streams   # [name] -> numpy.array or scipy.sparse.csr_matrix or list of those
+        self._streams = []          # meta information about exposed stream
         num_sequences = -1          # total number of sequences (can be of length 1 in sample mode)
                                     # must be the same for all streams
 
-        # get the data and types from the input, and form streams array
+        # get the data and types from the input
+        # for each stream we need to find out the shape and sparsity from the data
         from scipy import sparse
-        for name, arg in data_streams.items():
-            if isinstance(arg, tuple):
-                value, type = arg
-                type = Variable._Type._sanitize(type)
-                dynamic_axes = getattr(type, 'dynamic_axes', None)
-                is_sequence = dynamic_axes and len(dynamic_axes) > 1
-                if not isinstance(type, Variable._Type):
-                    raise ValueError('type must be a CNTK variable type, e.g. Tensor[13]')
-                if isinstance(value[0], sparse.csr_matrix):
-                    type['is_sparse'] = True
+        for name, value in data_streams.items():
+            is_sequence = isinstance(value, list) # assume that this is a list of sequences
+
+            # Check sparsity
+            element = value[0] if is_sequence else value
+            if isinstance(element, np.ndarray):
+                is_sparse = False
+            elif isinstance(element, sparse.csr_matrix):
+                is_sparse = True
             else:
-                value = arg
-                is_sequence = False  # data without type cannot have a dynamic axis
-                type = Variable._Type(is_sparse=isinstance(value, sparse.csr_matrix)) # shape implanted below
-            if not isinstance(value[0] if isinstance(value, list) else value, (np.ndarray, sparse.csr_matrix)):
                 raise TypeError('data must be a numpy.array or scipy.sparse.csr_matrix, or a list of those')
 
             sample_shape = value[0].shape[1:] if is_sequence else value.shape[1:]
-            if not type.shape_is_known:
-                type = type.updated_with(shape=sample_shape) # implant the shape
-            elif type.shape != sample_shape:
-                ValueError("specified type's shape does not match the data's shape")
-            try:
-                dtype = value.dtype # numpy array and Value
-            except:
-                dtype = value[0].dtype # for lists
-            try:
-                type.dtype
-            except:
-                type = type.updated_with(dtype=dtype) # implant the dtype
-            stream_num_sequences = len(value) if isinstance(value, list) else value.shape[0]
+
+            # Check length of the chunk across streams
+            stream_num_sequences = len(value) if is_sequence else value.shape[0]            
             if num_sequences == -1:
                 if stream_num_sequences == 0:
                     raise(ValueError('data is empty'))
                 num_sequences = stream_num_sequences
             elif stream_num_sequences != num_sequences:
                 raise TypeError('all data items must have the same first dimension')
-            self._data[name] = value
-            self._types[name] = type
+            self._streams.append(dict(name = name, shape = sample_shape, is_sparse = is_sparse))
 
     def stream_infos(self):
-        return [StreamInformation(name, i, ['dense', 'sparse'][getattr(self._types[name], 'is_sparse', False)], 
-                                  self._types[name].dtype, self._types[name].shape)
-                for i, name in enumerate(self._data.keys())]
+        return [StreamInformation(s['name'], i, ['dense', 'sparse'][s['is_sparse']], 
+                                  np.float32, s['shape'])
+                for i, s in enumerate(self._streams)]
 
     def num_chunks(self):
         return 1
