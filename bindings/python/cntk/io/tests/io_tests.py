@@ -1196,7 +1196,7 @@ def test_user_deserializer_sequence_mode():
     # Big chunks
     d = GenDeserializer(stream_infos=streams, num_chunks=15, 
                         num_sequences=100, max_sequence_len=10)
-    mbs = MinibatchSource([d], randomize=False, max_sweeps=2, randomization_window_in_chunks=5)
+    mbs = MinibatchSource([d], randomize=False, max_sweeps=2)
     run_minibatch_source(mbs, num_chunks=15, num_sequences_per_value=200)
     # Randomized
     mbs = MinibatchSource([d], randomize=True, max_sweeps=2, randomization_window_in_chunks=5)
@@ -1205,7 +1205,7 @@ def test_user_deserializer_sequence_mode():
     # Small chunks of 1
     d = GenDeserializer(stream_infos=streams, num_chunks=15,
                         num_sequences=1, max_sequence_len=10)
-    mbs = MinibatchSource([d], randomize=False, max_sweeps=3, randomization_window_in_chunks=5)
+    mbs = MinibatchSource([d], randomize=False, max_sweeps=3)
     run_minibatch_source(mbs, num_chunks=15, num_sequences_per_value=3)
     # Randomized
     mbs = MinibatchSource([d], randomize=True, max_sweeps=3, randomization_window_in_chunks=5)
